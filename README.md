@@ -67,7 +67,9 @@ pip install azure-ai-projects azure-identity rich
 
 Make sure you deploy `gpt-4o` and `gpt-4o-mini` with the exact naming of those models as-is. If the deployment name is any different, then please be sure to modify the code accordingly.
 
-### Custom Connection String
+### Azure AI Foundry Project Connection String
+
+![Screen from AI Foundry](connectionstring.png)
 
 By default, the tool uses the "Azure AI Foundry Project Connection String" which you can find from Overview > Project details > Project connection string
 
