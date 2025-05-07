@@ -50,8 +50,8 @@ The Orchestrator Agent coordinates these specialized agents, ensuring smooth wor
 
 1. Clone this repository:
 ```bash
-git clone https://github.com/yourusername/py-sk-azure-agents.git
-cd py-sk-azure-agents
+git clone https://github.com/johnmaeda/py-relaxing-form-filler.git
+cd py-relaxing-form-filler
 python -m venv venv
 source venv/bin/activate
 ```
