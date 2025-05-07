@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from rich.console import Console
 from rich.prompt import Prompt
 from rich.progress import Progress, SpinnerColumn, TextColumn
+import argparse
 
 # Azure AI Projects SDK imports
 from azure.ai.projects import AIProjectClient
@@ -932,6 +933,19 @@ class AzureAIQuestionnaire:
 
 def main():
     """Main function for running the questionnaire."""
+    import argparse
+    
+    # Set up argument parser
+    parser = argparse.ArgumentParser(description='Process a questionnaire using Azure AI.')
+    parser.add_argument('questions_file', help='Path to the markdown file containing questions')
+    parser.add_argument('--unfinished', '-u', help='Path to unfinished Q&A file (optional)')
+    parser.add_argument('--max-turns', '-t', type=int, default=5,
+                      help='Maximum number of conversation turns per section (default: 5)')
+    parser.add_argument('--completion-threshold', '-c', type=int, default=90,
+                      help='Completion threshold percentage (0-100) to consider a section complete (default: 90)')
+    
+    args = parser.parse_args()
+    
     # Check connection string
     conn_str = os.getenv("AZURE_AI_CONN_STR", AZURE_AI_CONN_STR)
     if not check_connection_string(conn_str):
@@ -950,44 +964,39 @@ def main():
     selected_model = list(AZURE_MODELS.keys())[int(model_choice)-1]
     
     console.print(f"[green]Selected model: {selected_model}[/green]")
-    
-    # Get the questions file from command-line or prompt
-    if len(sys.argv) > 1:
-        questions_file = sys.argv[1]
-    else:
-        questions_file = Prompt.ask("Enter the path to your questions file", default="sample_questions.md")
-    
-    console.print(f"[green]Using questions from: {questions_file}[/green]")
-    
-    # Get unfinished Q&A file (optional)
-    unfinished_file = None
-    if len(sys.argv) > 2:
-        unfinished_file = sys.argv[2]
-    else:
-        use_unfinished = Prompt.ask(
-            "Do you want to use a file with unfinished Q&A content?", 
-            choices=["y", "n"], 
-            default="n"
-        )
-        if use_unfinished.lower() == "y":
-            unfinished_file = Prompt.ask("Enter the path to your unfinished Q&A file")
+    console.print(f"[green]Using questions from: {args.questions_file}[/green]")
+    console.print(f"[green]Max turns per section: {args.max_turns}[/green]")
+    console.print(f"[green]Completion threshold: {args.completion_threshold}%[/green]")
     
     try:
         # Read questions file with proper encoding and character replacement
         try:
-            with open(questions_file, 'r', encoding='utf-8') as f:
+            with open(args.questions_file, 'r', encoding='utf-8') as f:
                 md = f.read()
         except UnicodeDecodeError:
             # Fallback to latin-1 if utf-8 fails
-            with open(questions_file, 'r', encoding='latin-1') as f:
+            with open(args.questions_file, 'r', encoding='latin-1') as f:
                 md = f.read()
         
         # Replace problematic characters
         md = md.replace('–', '-')  # Replace en dash with regular hyphen
         md = md.replace('—', '-')  # Replace em dash with regular hyphen
         
-        # Read unfinished Q&A file if provided
+        # Handle unfinished Q&A file
         unfinished_content = None
+        unfinished_file = args.unfinished
+        
+        # If no unfinished file provided via command line, prompt the user
+        if not unfinished_file:
+            use_unfinished = Prompt.ask(
+                "Do you want to use a file with unfinished Q&A content?", 
+                choices=["y", "n"], 
+                default="n"
+            )
+            if use_unfinished.lower() == "y":
+                unfinished_file = Prompt.ask("Enter the path to your unfinished Q&A file")
+        
+        # Read unfinished Q&A file if provided (either via command line or prompt)
         if unfinished_file:
             try:
                 try:
@@ -1012,6 +1021,10 @@ def main():
         if not questionnaire.setup():
             console.print("[bold red]Failed to set up questionnaire. Exiting.[/bold red]")
             sys.exit(1)
+        
+        # Set the custom parameters
+        questionnaire.max_turns_per_section = args.max_turns
+        questionnaire.completion_threshold = args.completion_threshold
             
         result = questionnaire.set_input(md, unfinished_qa=unfinished_content).process_questionnaire()
         
@@ -1023,7 +1036,6 @@ def main():
     except Exception as e:
         console.print(f"[bold red]Error: {str(e)}[/bold red]")
         sys.exit(1)
-
 
 if __name__ == "__main__":
     main() 
