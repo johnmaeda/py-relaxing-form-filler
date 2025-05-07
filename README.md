@@ -1,2 +1,145 @@
-# py-relaxing-form-filler
-Let Azure AI Agent Service make it easy for you to fill out any form!
+# Relaxing Form Filler
+
+A tool for interactive questionnaire processing using Azure AI agents.
+
+## Overview
+
+This tool processes structured questionnaires in markdown format, facilitating interactive conversations through Azure AI agents. It guides users through each section of a questionnaire, analyzes responses, and synthesizes answers based on the conversation.
+
+Key features:
+- Section-by-section processing with progress tracking
+- Continuation from previously unfinished work
+- Real-time temporary results file for monitoring progress
+- Final output saved in markdown format
+- Uses Azure AI Projects SDK for agent management
+
+## Multi-Agent Architecture
+
+The system employs a sophisticated multi-agent architecture where different agents work together to process the questionnaire efficiently. Here's how the agents interact [link](https://mermaid.live/edit#pako:eNptUsmO2zAM_RVBZ2fgJasOBTxJCvQ0XS-1g4Fis47QWHIluZ1s_17KsjPJtD4IIvXe4yPpEy1UCZTRSvNmR76ucknwS7NvBvSGjEbvzh9k09ozecyedLEDYzW3SpO0Amk3Hv3Y4b5AYYWS5KNWBRgjZHUmy-xTixSX_pfwGUyjpAGSSr4_GGHOZJUN9_8VOEiLBhxunV2DO6A_lx18qIzwtO-qy6fS_AGN2eUtuncNJRlsOTsesep5vTMEtHvrXPjn9Z27I0o8tdbP7Nb-e4ECr-T01rFpt34BXTPPvQWxFXthBRgP6sw-l2CKN1NlOHMweDHk19B0QGoueQWGCGlB8243AfnN96LkFtN6aHPzqr7y6vc7YH4_x1tOQODFOlEnb0S1s5hqNDQcIYT3_BvltVd-szVGlqreCnnlOGV8QL_OourGiLWkaZ1u4WZiLMji0EuDLGmA_64oKbO6hYDWoGvuQnpykJxivRpyyvBacv0zp7m8IKfh8rtS9UDTqq12lP3ge4NR27gZrQTHpdTXrMZqoJeqlZayOAk7EcpO9IWyURQ-LJJpNJ8msyhehPPJIqAHyqLx7CGMw_k0SsI4GS-iySWgx65whA9xOIkns_k0nCbheHz5C7AlLC0)
+
+```mermaid
+graph TD
+    A[User] -->|Input| B[Orchestrator Agent]
+    B -->|Section Processing| C[Question Agent]
+    B -->|Response Analysis| D[Analysis Agent]
+    B -->|Synthesis| E[Synthesis Agent]
+    
+    C -->|Questions| A
+    A -->|Answers| C
+    C -->|Processed Responses| D
+    D -->|Analysis Results| E
+    E -->|Synthesized Output| B
+    B -->|Final Results| A
+    
+    subgraph Agent_Responsibilities
+        C_desc[Question Agent: Presents questions, manages interaction, validates responses]
+        D_desc[Analysis Agent: Analyzes responses, extracts insights, prepares analysis]
+        E_desc[Synthesis Agent: Combines analyses, generates output, ensures consistency]
+    end
+```
+
+The system uses three specialized agents working in concert:
+
+1. **Question Agent**: Manages the interactive Q&A process, presenting questions and collecting responses
+2. **Analysis Agent**: Processes and analyzes user responses to extract key insights
+3. **Synthesis Agent**: Combines analyses and generates the final output
+
+The Orchestrator Agent coordinates these specialized agents, ensuring smooth workflow and maintaining context throughout the questionnaire process.
+
+## Installation
+
+1. Clone this repository:
+```bash
+git clone https://github.com/yourusername/py-sk-azure-agents.git
+cd py-sk-azure-agents
+python -m venv venv
+source venv/bin/activate
+```
+
+2. Install dependencies:
+```bash
+pip install azure-ai-projects azure-identity rich
+```
+
+## Usage
+
+### Deploy Two Models Please
+
+Make sure you deploy gpt-4o and gpt-4o-mini with the exact naming of those models as-is. If the deployment name is any different, then please be sure to modify the code accordingly.
+
+### Custom Connection String
+
+By default, the tool uses a built-in connection string. You should specify your own and be sure to be logged in to Azure:
+
+```bash
+export AZURE_AI_CONN_STR="your-host;your-subscription-id;your-resource-group;your-project-name"
+az login
+```
+
+### Basic Usage
+
+Run the processor with a markdown file containing your questionnaire:
+
+```bash
+python azure_ai_form.py qa_sample.md
+```
+
+### Continue from Unfinished Work
+
+If you have an unfinished questionnaire session, you can continue from there:
+
+```bash
+python azure_ai_form.py sample_sample.md previous_results.md
+```
+
+## Questionnaire Format
+
+Create your questionnaire in markdown format with this structure:
+
+```markdown
+### Section Title
+
+1. First question in this section?
+2. Second question in this section?
+3. Third question in this section?
+
+### Another Section
+
+1. First question in second section?
+2. Second question in second section?
+```
+
+## Interactive Commands
+
+During the questionnaire session, you can:
+- Type `exit` or `quit` (or `x`/`q`) to end the session and save partial results
+- Otherwise, just respond normally to the questions
+
+## Monitoring Progress
+
+While the tool runs, it maintains a temporary file (`temp_results.md`) that updates after each section is completed. This allows you to:
+- Monitor progress in real-time
+- See which section is currently being processed
+- View synthesized answers as they're generated
+
+The temporary file is automatically deleted when the process completes successfully.
+
+## Output
+
+The final results are saved to a markdown file with a timestamp (e.g., `qa_result_20240520_123045.md`).
+
+## Example
+
+Here's a typical workflow:
+
+1. Create a markdown file with your questionnaire sections and questions
+2. Run the processor: `python azure_ai_form.py your_questions.md`
+3. The tool will prompt you to select a model
+4. Follow the conversational prompts for each section
+5. Monitor progress in the temporary file (`temp_results.md`)
+6. When complete, results are saved to the final output file
+
+## License
+
+[Add your license information here]
+
