@@ -87,10 +87,10 @@ az login
 
 Run the processor with a markdown file containing a questionnaire. There are a few samples available:
 
-- qa_sample_food.md: Getting to understand your foodie-ness
-- qa_sample_whoamid.md: Basic overview of who you are
-- qa_sample_msconnect.md: Corporate performance review sample
-- qa_sample_shrm_generic.md: Corporate performance review sample
+- `qa_sample_food.md`: Getting to understand your foodie-ness
+- `qa_sample_whoami.md`: Basic overview of who you are
+- `qa_sample_msconnect.md`: Corporate performance review sample 1
+- `qa_sample_shrm_generic.md`: Corporate performance review sample 2
 
 ```bash
 python azure_ai_form.py qa_sample_food.md
