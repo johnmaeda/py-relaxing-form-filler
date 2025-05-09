@@ -15,7 +15,7 @@ Key features:
 
 ## Multi-Agent Architecture
 
-The system employs a sophisticated multi-agent architecture where different agents work together to process the questionnaire efficiently. Here's how the agents interact [link](https://mermaid.live/edit#pako:eNptUsmO2zAM_RVBZ2fgJasOBTxJCvQ0XS-1g4Fis47QWHIluZ1s_17KsjPJtD4IIvXe4yPpEy1UCZTRSvNmR76ucknwS7NvBvSGjEbvzh9k09ozecyedLEDYzW3SpO0Amk3Hv3Y4b5AYYWS5KNWBRgjZHUmy-xTixSX_pfwGUyjpAGSSr4_GGHOZJUN9_8VOEiLBhxunV2DO6A_lx18qIzwtO-qy6fS_AGN2eUtuncNJRlsOTsesep5vTMEtHvrXPjn9Z27I0o8tdbP7Nb-e4ECr-T01rFpt34BXTPPvQWxFXthBRgP6sw-l2CKN1NlOHMweDHk19B0QGoueQWGCGlB8243AfnN96LkFtN6aHPzqr7y6vc7YH4_x1tOQODFOlEnb0S1s5hqNDQcIYT3_BvltVd-szVGlqreCnnlOGV8QL_OourGiLWkaZ1u4WZiLMji0EuDLGmA_64oKbO6hYDWoGvuQnpykJxivRpyyvBacv0zp7m8IKfh8rtS9UDTqq12lP3ge4NR27gZrQTHpdTXrMZqoJeqlZayOAk7EcpO9IWyURQ-LJJpNJ8msyhehPPJIqAHyqLx7CGMw_k0SsI4GS-iySWgx65whA9xOIkns_k0nCbheHz5C7AlLC0)
+The system employs a multi-agent architecture where different agents work together to process the questionnaire efficiently. Here's how the agents interact [link](https://mermaid.live/edit#pako:eNptUsmO2zAM_RVBZ2fgJasOBTxJCvQ0XS-1g4Fis47QWHIluZ1s_17KsjPJtD4IIvXe4yPpEy1UCZTRSvNmR76ucknwS7NvBvSGjEbvzh9k09ozecyedLEDYzW3SpO0Amk3Hv3Y4b5AYYWS5KNWBRgjZHUmy-xTixSX_pfwGUyjpAGSSr4_GGHOZJUN9_8VOEiLBhxunV2DO6A_lx18qIzwtO-qy6fS_AGN2eUtuncNJRlsOTsesep5vTMEtHvrXPjn9Z27I0o8tdbP7Nb-e4ECr-T01rFpt34BXTPPvQWxFXthBRgP6sw-l2CKN1NlOHMweDHk19B0QGoueQWGCGlB8243AfnN96LkFtN6aHPzqr7y6vc7YH4_x1tOQODFOlEnb0S1s5hqNDQcIYT3_BvltVd-szVGlqreCnnlOGV8QL_OourGiLWkaZ1u4WZiLMji0EuDLGmA_64oKbO6hYDWoGvuQnpykJxivRpyyvBacv0zp7m8IKfh8rtS9UDTqq12lP3ge4NR27gZrQTHpdTXrMZqoJeqlZayOAk7EcpO9IWyURQ-LJJpNJ8msyhehPPJIqAHyqLx7CGMw_k0SsI4GS-iySWgx65whA9xOIkns_k0nCbheHz5C7AlLC0)
 
 ```mermaid
 graph TD
@@ -58,23 +58,36 @@ source venv/bin/activate
 
 2. Install dependencies:
 ```bash
-pip install azure-ai-projects azure-identity rich
+pip install azure-ai-projects azure-identity rich numpy sounddevice scipy python-dotenv
 ```
 
 ## Usage
 
-### Deploy Two Models Please
+### Deploy Three Models Please
 
 Make sure you deploy `gpt-4o` and `gpt-4o-mini` with the exact naming of those models as-is. If the deployment name is any different, then please be sure to modify the code accordingly.
 
+If you want to use voice, from AI Foundry deploy `whisper` with that exact naming. And in addition set the endpoint and key parameters.
+
 ### Azure AI Foundry Project Connection String
 
-![Screen from AI Foundry](connectionstring.png)
+![Screen from AI Foundry](assets/connectionstring.png)
 
 By default, the tool uses the "Azure AI Foundry Project Connection String" which you can find from Overview > Project details > Project connection string
 
+**For macOS/Linux (bash, zsh, etc.):**
 ```bash
 export AZURE_AI_CONN_STR="connection string here"
+```
+
+**For Windows (Command Prompt):**
+```batch
+set AZURE_AI_CONN_STR="connection string here"
+```
+
+**For Windows (PowerShell):**
+```powershell
+$env:AZURE_AI_CONN_STR="connection string here"
 ```
 
 ### Requires Login To Azure
@@ -85,17 +98,46 @@ Be sure to be logged in to Azure:
 az login
 ```
 
+### If Using Voice
+
+To use `whisper` please set these parameters.
+
+**For macOS/Linux (bash, zsh, etc.):**
+```bash
+export AZURE_OPENAI_ENDPOINT="https://<name>.openai.azure.com/"
+export AZURE_OPENAI_API_KEY="<key>"
+```
+
+**For Windows (Command Prompt):**
+```batch
+set AZURE_OPENAI_ENDPOINT="https://<name>.openai.azure.com/"
+set AZURE_OPENAI_API_KEY="<key>"
+```
+
+**For Windows (PowerShell):**
+```powershell
+$env:AZURE_OPENAI_ENDPOINT="https://<name>.openai.azure.com/"
+$env:AZURE_OPENAI_API_KEY="<key>"
+```
+
+If you're on Mac you can use `mlx-whisper` with:
+
+```bash
+pip install mlx-whisper
+```
+
 ### Basic Usage
 
 Run the processor with a markdown file containing a questionnaire. There are a few samples available:
 
-- `qa_sample_food.md`: Getting to understand your foodie-ness
-- `qa_sample_whoami.md`: Basic overview of who you are
-- `qa_sample_msconnect.md`: Corporate performance review sample 1
-- `qa_sample_shrm_generic.md`: Corporate performance review sample 2
+- `samples/qa_food.md`: Getting to understand your foodie-ness
+- `samples/qa_whoami.md`: Basic overview of who you are
+- `samples/qa_msconnect.md`: Corporate performance self-review sample 1
+- `samples/qa_shrm_generic.md`: Corporate performance self-review sample 2
+- `samples/qa_baseballard.md`: Corporate performance self-review sample 3
 
 ```bash
-python azure_ai_form.py qa_sample_food.md
+python azure_ai_form.py samples/qa_food.md
 ```
 
 ### Command Line Options

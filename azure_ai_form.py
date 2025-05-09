@@ -11,13 +11,38 @@ from rich.prompt import Prompt
 from rich.progress import Progress, SpinnerColumn, TextColumn
 import argparse
 
+# Attempt to load environment variables from .env file
+# This should be one of the first things to do
+try:
+    from dotenv import load_dotenv
+    load_dotenv() # Loads variables from .env into environment
+    # print("DEBUG: .env file loaded successfully by dotenv.") # Optional: for debugging
+except ImportError:
+    # dotenv is not installed, proceed without it (rely on system env vars)
+    # print("DEBUG: dotenv not found, relying on system environment variables.") # Optional: for debugging
+    pass
+
+# Initialize console for rich text output
+console = Console()
+
+# Try to import voice input utility
+try:
+    from utils.voice_input import record_and_transcribe, MLX_WHISPER_AVAILABLE
+    VOICE_AVAILABLE = True
+    console.print("[dim]Voice input module loaded.[/dim]")
+except ImportError:
+    VOICE_AVAILABLE = False
+    MLX_WHISPER_AVAILABLE = False # Ensure this is also False if import fails
+    console.print("[yellow]Warning: utils.voice_input module not found. Voice input will be disabled.[/yellow]")
+    # Define a placeholder if needed, or just rely on VOICE_AVAILABLE flag
+    def record_and_transcribe(*args, **kwargs):
+        console.print("[bold red]Voice input functionality not available.[/bold red]")
+        return None
+
 # Azure AI Projects SDK imports
 from azure.ai.projects import AIProjectClient
 from azure.ai.projects.models import CodeInterpreterTool
 from azure.identity import DefaultAzureCredential
-
-# Initialize console for rich text output
-console = Console()
 
 # Available Azure OpenAI models
 AZURE_MODELS = {
@@ -127,7 +152,7 @@ def create_ai_project_client(conn_str: str = AZURE_AI_CONN_STR) -> Optional[AIPr
         console.print("[yellow]Please check your connection string and try again.[/yellow]")
         return None
 
-def parse_markdown_sections(markdown_content: str) -> List[Section]:
+def parse_markdown_sections(markdown_content: str) -> Tuple[str, List[Section]]:
     """
     Parse a markdown file with sections and questions.
     
@@ -135,13 +160,31 @@ def parse_markdown_sections(markdown_content: str) -> List[Section]:
         markdown_content: The content of the markdown file
         
     Returns:
-        List[Section]: List of sections with their questions
+        Tuple[str, List[Section]]: (preamble_content, sections_found)
     """
     # Find all sections
-    section_pattern = r"###\s*(.+?)\n([\s\S]*?)(?=###|$)"
-    sections = []
+    section_pattern = r"(?:^|\n)(?:##|###)\s*(.+?)\n([\s\S]*?)(?=(?:^|\n)(?:##|###)|$)"
     
-    for title, body in re.findall(section_pattern, markdown_content):
+    # Try to find the first section match to identify preamble
+    first_section_match = re.search(section_pattern, markdown_content)
+    preamble_content = ""
+    content_to_parse_for_sections = markdown_content
+
+    if first_section_match:
+        preamble_end_index = first_section_match.start()
+        preamble_content = markdown_content[:preamble_end_index].strip()
+        content_to_parse_for_sections = markdown_content[preamble_end_index:]
+    else:
+        # No ## or ### sections found, the whole content might be preamble (e.g. only a # title)
+        # or it might be content without any specific section markers we look for.
+        # For now, if no ## or ###, treat all as preamble if it contains a # header, otherwise assume no sections.
+        if markdown_content.strip().startswith("#"):
+            preamble_content = markdown_content.strip()
+            # No sections will be found by the loop below if this is the case
+        # else: sections_found remains empty, preamble is empty. Handled by existing logic.
+
+    sections_found = []
+    for title, body in re.findall(section_pattern, content_to_parse_for_sections):
         questions = []
         
         # Look for questions with numbered patterns like "**1.**", "1.", etc.
@@ -175,14 +218,14 @@ def parse_markdown_sections(markdown_content: str) -> List[Section]:
                     if q_text:
                         questions.append(Question(text=q_text, index=idx))
         
-        sections.append(Section(title=title.strip(), questions=questions))
+        sections_found.append(Section(title=title.strip(), questions=questions))
         
         # Debug output
         console.print(f"[dim]Found {len(questions)} questions in section '{title}'[/dim]")
         if questions:
             console.print(f"[dim]First question: '{questions[0].text}'[/dim]")
             
-    return sections
+    return preamble_content, sections_found
 
 def parse_unfinished_qa(unfinished_content: Optional[str]) -> Dict[str, str]:
     """
@@ -244,6 +287,7 @@ class AzureAIQuestionnaire:
         self.unfinished_content = None
         self.temp_results_file = "temp_results.md"  # Name of the temporary results file
         self._parsed_sections = None  # Cache for parsed sections
+        self._preamble_content = "" # To store the content before the first ## or ### section
         
     def setup(self) -> bool:
         """
@@ -283,23 +327,29 @@ class AzureAIQuestionnaire:
                 self.agents["evaluator"] = self.client.agents.create_agent(
                     model=self.model_id,
                     name="Section Evaluator",
-                    instructions="""You are a section evaluator.
-                    Your task is to evaluate how completely a set of questions has been answered in a conversation.
-                    You will be given a list of topics/questions to assess and a conversation transcript.
-                    
-                    For each analysis, provide:
-                    1. Whether all questions have been fully answered (is_complete)
-                    2. A list of indices (0-based) for questions that aren't fully answered (missing_questions)
-                    3. An estimate of completion percentage from 0-100
-                    
-                    Format your response as valid JSON with these fields:
+                    instructions="""You are a meticulous section evaluator. Your SOLE task is to evaluate conversation completeness.
+                    You MUST provide your response ONLY as a single, valid JSON object, with no other text before or after it.
+                    The JSON object must contain these exact fields:
+                    - "content": A brief summary or the raw conversation content you evaluated.
+                    - "is_complete": A boolean (true/false) indicating if all questions/topics were fully addressed.
+                    - "missing_questions": A list of 0-based integer indices for questions/topics not fully answered. If all are complete, this MUST be an empty list [].
+                    - "completion_percentage": A float (0.0 to 100.0) estimating overall completion.
+
+                    Example of a valid JSON response:
                     {
-                        "content": "Conversation content provided",
-                        "is_complete": true/false,
-                        "missing_questions": [indices of missing questions],
-                        "completion_percentage": 0-100
+                        "content": "User discussed their name and preferred nickname.",
+                        "is_complete": false,
+                        "missing_questions": [1],
+                        "completion_percentage": 50.0
                     }
-                    """
+                    Example if complete:
+                    {
+                        "content": "User fully answered all questions about their background and experience.",
+                        "is_complete": true,
+                        "missing_questions": [],
+                        "completion_percentage": 100.0
+                    }
+                    Ensure your entire response is ONLY this JSON structure."""
                 )
                 progress.update(task, completed=True)
             
@@ -442,7 +492,7 @@ class AzureAIQuestionnaire:
         self.max_turns_per_section = max_turns_per_section
         self.unfinished_content = unfinished_qa
         # Parse sections once and cache them
-        self._parsed_sections = parse_markdown_sections(markdown_content)
+        self._preamble_content, self._parsed_sections = parse_markdown_sections(markdown_content)
         return self
     
     def process_questionnaire(self) -> QuestionnaireResult:
@@ -457,6 +507,12 @@ class AzureAIQuestionnaire:
             
         # Use cached sections instead of parsing again
         sections = self._parsed_sections
+        if not sections and not self._preamble_content:
+            # If parsing found no sections and no preamble, it implies the input was empty or not parsable as expected.
+            # We might want to handle this, e.g., by raising an error or returning an empty result.
+            # For now, let it proceed, it will likely result in an empty output file, which is acceptable.
+            console.print("[yellow]Warning: No sections or preamble found in the input markdown.[/yellow]")
+
         unfinished_sections = parse_unfinished_qa(self.unfinished_content)
         
         all_responses = {}
@@ -468,6 +524,7 @@ class AzureAIQuestionnaire:
         # Display command help at the beginning
         console.print("\n[bold blue]Available commands during conversation:[/bold blue]")
         console.print("  - Type [bold green]exit[/bold green] or [bold green]quit[/bold green] to end the session and save results")
+        console.print("  - Type [bold green]voice[/bold green] or [bold green]v[/bold green] to use voice input (if available)")
         console.print("  - Or simply type your response as normal\n")
         
         console.print(f"[dim]A temporary results file will be updated after each section: {self.temp_results_file}[/dim]")
@@ -482,7 +539,7 @@ class AzureAIQuestionnaire:
             
             # Skip sections with no questions
             if not questions:
-                console.print(f"\n=== Section: {title} ===")
+                console.print(f"\n[blue]=== Section: {title} ===[/blue]")
                 console.print("[yellow]No specific questions found for this section. Moving to next section.[/yellow]")
                 continue
             
@@ -533,6 +590,35 @@ class AzureAIQuestionnaire:
         if response.lower() in ["exit", "quit", "x", "q"]:
             console.print(f"[dim]Recognized '{response}' as exit command[/dim]")
             return "exit"
+        elif response.lower() in ["voice", "v"]:
+            if VOICE_AVAILABLE:
+                console.print("[bold blue]🎤 Voice input activated. Recording...[/bold blue]")
+                # Determine transcription mode
+                # Default to local if mlx_whisper is available, otherwise azure
+                transcription_mode = "local" if MLX_WHISPER_AVAILABLE else "azure"
+                
+                if transcription_mode == "azure":
+                    # Check for Azure OpenAI credentials for voice if not already handled by voice_input.py
+                    if not os.getenv("AZURE_OPENAI_ENDPOINT") or not os.getenv("AZURE_OPENAI_API_KEY"):
+                        console.print("[bold red]Azure OpenAI endpoint and API key are required for voice transcription in Azure mode.[/bold red]")
+                        console.print("[yellow]Please set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY environment variables.[/yellow]")
+                        console.print("[yellow]Voice input disabled for this attempt. Please type your response.[/yellow]")
+                        return self._get_user_input(prompt_text) # Re-prompt for text input
+
+                transcribed_text = record_and_transcribe(
+                    output_file="temp_voice_input.wav", # Temporary file for voice recording
+                    mode=transcription_mode,
+                    # mlx_model can be configured if needed, uses default from voice_input.py
+                )
+                if transcribed_text:
+                    console.print(f"[green]Transcription:[/green] {transcribed_text}")
+                    return transcribed_text
+                else:
+                    console.print("[yellow]Voice input failed or no transcription received. Please type your response.[/yellow]")
+                    return self._get_user_input(prompt_text) # Re-prompt for text input
+            else:
+                console.print("[yellow]Voice input module not available. Please type your response.[/yellow]")
+                return self._get_user_input(prompt_text) # Re-prompt for text input
             
         return response
 
@@ -548,7 +634,7 @@ class AzureAIQuestionnaire:
         Returns:
             Tuple[bool, str, List[Dict[str, str]]]: (success, response_content, answers)
         """
-        console.print(f"\n=== Section: {title} ===")
+        console.print(f"\n[blue]=== Section: {title} ===[/blue]")
         
         # Initialize with existing content if provided
         interview_content = ""
@@ -587,7 +673,7 @@ class AzureAIQuestionnaire:
             console.print(init_prompt)
             
             # Initial response with command support
-            response = self._get_user_input("\nYour response")
+            response = self._get_user_input("[bold magenta]>> Your response[/bold magenta]")
             
             # Check for exit commands
             if response.lower() == "exit":
@@ -647,7 +733,7 @@ class AzureAIQuestionnaire:
                                            (feedback.is_complete or not feedback.missing_questions))
                         
                         if section_complete:
-                            console.print(f"\n✅ [bold green]Section complete! ({int(current_progress)}% coverage)[/bold green]")
+                            console.print(f"✅ [bold green]Section complete! ({int(current_progress)}% coverage)[/bold green]")
                             break
                             
                         # Get the next question topic
@@ -664,7 +750,7 @@ class AzureAIQuestionnaire:
                         else:
                             # No missing questions but still below threshold
                             if current_progress < self.completion_threshold:
-                                console.print(f"\n⚠️ [bold yellow]Progress is only {int(current_progress)}%. Let's dive deeper.[/bold yellow]")
+                                console.print(f"⚠️ [bold yellow]Progress is only {int(current_progress)}%. Let's dive deeper.[/bold yellow]")
                             
                             # Pick the next question in sequence
                             next_topic_idx = turn % len(questions)
@@ -705,7 +791,7 @@ class AzureAIQuestionnaire:
             console.print("\n" + followup)
             
             # Get response and continue conversation
-            next_response = self._get_user_input("\nYour response")
+            next_response = self._get_user_input("\n[bold magenta]>> Your response[/bold magenta]")
             
             # Check for exit commands
             if next_response.lower() == "exit":
@@ -717,7 +803,7 @@ class AzureAIQuestionnaire:
             
             # Check if this is the last turn
             if turn == self.max_turns_per_section - 1:
-                console.print(f"\n⚠️ [bold yellow]Maximum conversation turns reached. Final progress: {int(current_progress)}%[/bold yellow]")
+                console.print(f"⚠️ [bold yellow]Maximum conversation turns reached. Final progress: {int(current_progress)}%[/bold yellow]")
         
         # Synthesize answers for this section
         console.print(f"\n🔄 [bold blue]Synthesizing answers for section: {title}...[/bold blue]")
@@ -727,7 +813,8 @@ class AzureAIQuestionnaire:
             synth_prompt = (
                 f"QUESTION: {question.text}\n\n"
                 f"CONVERSATION TRANSCRIPT:\n{interview_content}\n\n"
-                f"Based on this conversation, synthesize a comprehensive, coherent answer to the question."
+                f"Based on this conversation, synthesize a comprehensive, coherent answer to the question. "
+                f"Your response MUST be ONLY a JSON object with keys \"question\" and \"answer\"."
             )
             
             try:
@@ -739,33 +826,52 @@ class AzureAIQuestionnaire:
                     transient=True,
                 ) as progress:
                     task = progress.add_task("Synthesizing", total=None)
-                    success, synth_resp = self.run_agent("synthesizer", synth_prompt)
+                    success, synth_resp_raw = self.run_agent("synthesizer", synth_prompt)
                     progress.update(task, completed=True)
+                
+                synthesized_answer_text = "Unable to synthesize an answer from the conversation." # Default
+
+                if success and synth_resp_raw:
+                    # Attempt to strip markdown code fences from the raw response
+                    cleaned_synth_resp = synth_resp_raw.strip()
+                    if cleaned_synth_resp.startswith("```json") and cleaned_synth_resp.endswith("```"):
+                        # Strip ```json ... ```
+                        cleaned_synth_resp = cleaned_synth_resp[len("```json"):].rstrip("`").strip()
+                    elif cleaned_synth_resp.startswith("```") and cleaned_synth_resp.endswith("```"):
+                        # Strip generic ``` ... ```
+                        cleaned_synth_resp = cleaned_synth_resp[len("```"):].rstrip("`").strip()
                     
-                if success:
-                    # Try to parse as JSON
                     try:
-                        response_data = json.loads(synth_resp)
-                        answer = response_data.get("answer", synth_resp)
-                    except:
-                        answer = synth_resp
-                        
-                    section_answers.append({
-                        "question": question.text,
-                        "answer": answer
-                    })
-                else:
-                    console.print(f"[bold red]Failed to synthesize answer for question {question.index+1}[/bold red]")
-                    section_answers.append({
-                        "question": question.text,
-                        "answer": "Unable to synthesize a response from the conversation."
-                    })
-                    
-            except Exception as e:
-                console.print(f"[bold red]Error synthesizing answer: {str(e)}[/bold red]")
+                        # Try to parse the cleaned response as JSON
+                        response_data = json.loads(cleaned_synth_resp)
+                        # Extract the 'answer' field from the JSON object
+                        if isinstance(response_data, dict) and 'answer' in response_data:
+                            synthesized_answer_text = response_data['answer']
+                        elif isinstance(response_data, str): # Agent returned a JSON encoded string e.g. "\"My answer\""
+                            synthesized_answer_text = response_data
+                        else:
+                            # Parsed to JSON, but not the expected dict structure or a simple string.
+                            synthesized_answer_text = cleaned_synth_resp # Use the cleaned (unfenced) string
+                            console.print(f"[yellow]Warning: Synthesizer returned parsable but unexpected JSON structure: {cleaned_synth_resp[:100]}...[/yellow]")
+
+                    except json.JSONDecodeError:
+                        # If JSON parsing fails even after cleaning, use the cleaned string directly.
+                        synthesized_answer_text = cleaned_synth_resp 
+                        console.print(f"[yellow]Warning: Synthesizer response was not valid JSON after cleaning: {cleaned_synth_resp[:100]}...[/yellow]")
+                    except TypeError: 
+                        console.print(f"[yellow]Warning: Synthesizer response was not processable as string for JSON parsing.[/yellow]")
+                        # synthesized_answer_text remains the default "Unable to synthesize..."
+                
                 section_answers.append({
                     "question": question.text,
-                    "answer": "Error synthesizing answer."
+                    "answer": synthesized_answer_text # This should now be the plain text answer
+                })
+                    
+            except Exception as e:
+                console.print(f"[bold red]Error synthesizing answer for q {question.index+1}: {str(e)}[/bold red]")
+                section_answers.append({
+                    "question": question.text,
+                    "answer": "Error during synthesis process."
                 })
         
         return True, interview_content, section_answers
@@ -787,7 +893,7 @@ class AzureAIQuestionnaire:
                 content=data.get("content", ""),
                 is_complete=data.get("is_complete", False),
                 missing_questions=data.get("missing_questions", []),
-                completion_percentage=data.get("completion_percentage", 0)
+                completion_percentage=data.get("completion_percentage", 0.0)
             )
         except json.JSONDecodeError:
             # If not valid JSON, try to extract information from the text
@@ -809,13 +915,13 @@ class AzureAIQuestionnaire:
                     pass
             
             # Try to extract completion percentage
-            completion_percentage = 0
-            percentage_match = re.search(r"completion_percentage\s*[=:]\s*(\d+)", feedback_text, re.IGNORECASE)
+            completion_percentage = 0.0 # Default to float
+            percentage_match = re.search(r"completion_percentage\s*[=:]\s*(\d+\.?\d*|\d+)", feedback_text, re.IGNORECASE)
             if percentage_match:
                 try:
-                    completion_percentage = int(percentage_match.group(1))
+                    completion_percentage = float(percentage_match.group(1))
                 except:
-                    pass
+                    pass # Keep default if conversion fails
             
             return SectionFeedback(
                 content=content,
@@ -841,12 +947,20 @@ class AzureAIQuestionnaire:
         # Format synthesized answers
         final_output = []
         
+        # Add preamble if it exists
+        if self._preamble_content:
+            final_output.append(self._preamble_content)
+
         for section_title, answers in result.synthesized_answers.items():
             section_output = [f"## {section_title}"]
             
-            for qa in answers:
-                section_output.append(f"**Q: {qa['question']}**")
-                section_output.append(f"{qa['answer']}")
+            for idx, qa in enumerate(answers):
+                section_output.append(f"**{idx + 1}. Q: {qa['question']}**") # Added enumeration
+                # The 'answer' should now be plain text due to processing in _process_section
+                answer_text = qa.get('answer', "Response not available.")
+                if not isinstance(answer_text, str):
+                    answer_text = str(answer_text) # Ensure it's a string
+                section_output.append(answer_text) # Append the plain text answer
                 section_output.append("")  # Empty line for spacing
             
             final_output.append("\n".join(section_output))
@@ -888,10 +1002,15 @@ class AzureAIQuestionnaire:
             # Add a header with timestamp
             timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             temp_output.append(f"# Temporary Results (Last Updated: {timestamp})\n")
+
+            # Add preamble to temp results as well
+            if self._preamble_content:
+                temp_output.append(self._preamble_content)
+
             temp_output.append("## Progress Summary")
             
             # Use cached sections instead of parsing again
-            total_sections = len(self._parsed_sections)
+            total_sections = len(self._parsed_sections) if self._parsed_sections else 0
             completed_sections = len(synthesized_answers)
             
             temp_output.append(f"Completed sections: {completed_sections} of {total_sections}\n")
@@ -904,8 +1023,8 @@ class AzureAIQuestionnaire:
             for section_title, answers in synthesized_answers.items():
                 section_output = [f"## {section_title}"]
                 
-                for qa in answers:
-                    section_output.append(f"**Q: {qa['question']}**")
+                for idx, qa in enumerate(answers):
+                    section_output.append(f"**{idx + 1}. Q: {qa['question']}**") # Added enumeration
                     section_output.append(f"{qa['answer']}")
                     section_output.append("")  # Empty line for spacing
                 
@@ -960,7 +1079,7 @@ def main():
     
     # Get user choice with default
     model_choices = {str(i): model_id for i, model_id in enumerate(AZURE_MODELS.keys(), 1)}
-    model_choice = Prompt.ask("\nEnter your choice", choices=list(model_choices.keys()), default="1")
+    model_choice = Prompt.ask("\n[bold magenta]Enter your choice[/bold magenta]", choices=list(model_choices.keys()), default="1")
     selected_model = list(AZURE_MODELS.keys())[int(model_choice)-1]
     
     console.print(f"[green]Selected model: {selected_model}[/green]")
@@ -989,7 +1108,7 @@ def main():
         # If no unfinished file provided via command line, prompt the user
         if not unfinished_file:
             use_unfinished = Prompt.ask(
-                "Do you want to use a file with unfinished Q&A content?", 
+                "[bold magenta]Do you want to use a file with unfinished Q&A content?[/bold magenta]", 
                 choices=["y", "n"], 
                 default="n"
             )
